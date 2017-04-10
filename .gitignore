@@ -22,3 +22,8 @@ Icon
 images/*
 *.png
 *.jpg
+
+
+# temp files
+*.swo
+*.swp
