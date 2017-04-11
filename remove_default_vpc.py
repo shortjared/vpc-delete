@@ -20,8 +20,11 @@ def parse_args():
     parser.add_argument('-b', '--batch', action='store_true')
     return parser.parse_args()
 
-def get_regions(session):
+def get_regions(session, selected_region):
     """returns an array of region names for all regions supporting ec2 services"""
+    if selected_region:
+        return [selected_region]
+
     ec2 = session.client('ec2')
     regions = ec2.describe_regions()
     return [x['RegionName'] for x in regions['Regions']]
@@ -46,6 +49,151 @@ def get_default_vpc(ec2_client):
         return None
 
     return response['Vpcs'][0]
+
+def get_ec2_instances(ec2_client, vpc_id):
+    """
+    Gets all the ec2 instances in the specified vpc.
+    Note this function will return a max of 1000 instances.  This is sufficient for our purposes.
+    You must use pagination if you need to get ALL instances
+    """
+    matches = []
+    response = ec2_client.describe_instances(
+        Filters=[
+            {
+                'Name': 'vpc-id',
+                'Values': [
+                    vpc_id,
+                ]
+            },
+        ],
+        MaxResults=1000
+    )
+    for instances in response['Reservations']:
+        matches.extend(instances['Instances'])
+
+    return matches
+
+
+
+
+def get_rds_instances(rds_client, vpc_id):
+    """
+    Gets all the rds instances in the specified vpc.
+    """
+    matching_instances = []
+
+    paginator = rds_client.get_paginator('describe_db_instances')
+    page_iterator = paginator.paginate()
+
+    for page in page_iterator:
+        #PP.pprint(page['DBInstances'])
+        for db_instance in page['DBInstances']:
+            if db_instance['DBSubnetGroup']['VpcId'] == vpc_id:
+                matching_instances.append(db_instance)
+
+    return matching_instances
+
+
+
+def get_redshift_instances(redshift_client, vpc_id):
+    """
+    Gets all the redshift instances in the specified vpc.
+    """
+    matching_instances = []
+
+    paginator = redshift_client.get_paginator('describe_clusters')
+    page_iterator = paginator.paginate()
+
+    for page in page_iterator:
+        #PP.pprint(page['Clusters'])
+        for cluster in page['Clusters']:
+            if cluster['VpcId'] == vpc_id:
+                matching_instances.append(cluster)
+
+    return matching_instances
+
+
+
+
+def get_lambda_instances(lambda_client, vpc_id):
+    """
+    Gets all the lambda instances in the specified vpc.
+    """
+    matching_instances = []
+
+    try:
+        paginator = lambda_client.get_paginator('list_functions')
+        page_iterator = paginator.paginate()
+
+        for page in page_iterator:
+            #PP.pprint(page['Functions'])
+            for lambda_function in page['Functions']:
+                if lambda_function.has_key('VpcConfig') and \
+                        lambda_function['VpcConfig'].has_key('VpcId') and \
+                        lambda_function['VpcConfig']['VpcId'] == vpc_id:
+                    matching_instances.append(lambda_function)
+
+    except botocore.exceptions.EndpointConnectionError as err:
+        print err.message + "(lambda is probably not supported in this region)"
+
+    return matching_instances
+
+
+def get_elb_instances(elb_client, vpc_id):
+    """
+    Gets all the elb instances in the specified vpc.
+    """
+    matching_instances = []
+
+    paginator = elb_client.get_paginator('describe_load_balancers')
+    page_iterator = paginator.paginate()
+
+    for page in page_iterator:
+        #PP.pprint(page['LoadBalancerDescriptions'])
+        for load_balancer in page['LoadBalancerDescriptions']:
+            if load_balancer['VPCId'] == vpc_id:
+                matching_instances.append(load_balancer)
+
+    return matching_instances
+
+
+def get_elbv2_instances(elb_client, vpc_id):
+    """
+    Gets all the elb instances in the specified vpc.
+    """
+    matching_instances = []
+
+    paginator = elb_client.get_paginator('describe_load_balancers')
+    page_iterator = paginator.paginate()
+
+    for page in page_iterator:
+        #PP.pprint(page['LoadBalancers'])
+        for load_balancer in page['LoadBalancers']:
+            if load_balancer['VpcId'] == vpc_id:
+                matching_instances.append(load_balancer)
+
+    return matching_instances
+
+
+def get_asg_instances(asg_client, vpc_id):
+    """
+    Gets all the autoscale groups in the specified vpc.
+    """
+    matching_instances = []
+
+    paginator = asg_client.get_paginator('describe_auto_scaling_groups')
+    page_iterator = paginator.paginate()
+
+    for page in page_iterator:
+        PP.pprint(page['AutoScalingGroups'])
+        for load_balancer in page['AutoScalingGroups']:
+            if load_balancer['VPCZoneIdentifier'] == vpc_id:
+                matching_instances.append(load_balancer)
+
+    return matching_instances
+
+
+
 
 
 def get_internet_gateways(ec2_client, vpc_id):
@@ -319,6 +467,58 @@ def prompt_to_continue():
 
     return False
 
+def get_vpc_tenants(session, vpc_id):
+    """ checks a vpc for dependent ec2, rds, redshift instances"""
+    tenants = []
+
+    print "...checking for ec2 instances on this vpc..."
+    client = session.client('ec2')
+    ec2_instances = get_ec2_instances(client, vpc_id)
+    tenants.extend([{'id_field': 'InstanceId', 'id': x['InstanceId'], 'type': 'instance'} \
+            for x in ec2_instances])
+
+    print "...checking for RDS DB instances on this vpc..."
+    client = session.client('rds')
+    rds_instances = get_rds_instances(client, vpc_id)
+    #PP.pprint(rds_instances)
+    tenants.extend([{'id_field': 'DBInstanceIdentifier',
+                     'id': x['DBInstanceIdentifier'],
+                     'type': 'rds'} for x in rds_instances])
+
+    print "...checking for redshift clusters on this vpc..."
+    client = session.client('redshift')
+    redshift_instances = get_redshift_instances(client, vpc_id)
+    #PP.pprint(redshift_instances)
+    tenants.extend([{'id_field': 'ClusterIdentifier',
+                     'id': x['ClusterIdentifier'],
+                     'type': 'redshift'} for x in redshift_instances])
+
+    print "...checking for load balancers on this vpc..."
+    client = session.client('elb')
+    elb_instances = get_elb_instances(client, vpc_id)
+    tenants.extend([{'id_field': 'LoadBalancerName', 'id': x['LoadBalancerName'], 'type': 'elb'} \
+            for x in elb_instances])
+    #PP.pprint(elb_instances)
+
+    print "...checking for load balancers (v2) on this vpc..."
+    client = session.client('elbv2')
+    elbv2_instances = get_elbv2_instances(client, vpc_id)
+    #PP.pprint(elbv2_instances)
+    tenants.extend([{'id_field': 'LoadBalancerName', 'id': x['LoadBalancerName'], 'type': 'elbv2'} \
+            for x in elbv2_instances])
+
+    print "...checking for lambda functions on this vpc..."
+    client = session.client('lambda')
+    lambda_instances = get_lambda_instances(client, vpc_id)
+    tenants.extend([{'id_field': 'FunctionName', 'id': x['FunctionName'], 'type': 'lambda'} \
+            for x in lambda_instances])
+
+    return tenants
+
+def print_resources(resource_list):
+    """ Prints the list of dependent resources"""
+    for res in resource_list:
+        print "[" + res['type'] +  "]  " + res['id_field'] + ": " + res['id']
 
 def main():
     """
@@ -332,14 +532,10 @@ def main():
 
     args = parse_args()
     session = boto3.Session(profile_name=args.profile, region_name=DEFAULT_REGION)
-    if args.region is None:
-        regions = get_regions(session)
-    else:
-        regions = [args.region]
+    regions = get_regions(session, args.region)
     dry_run = args.dry_run
 
     print_warning()
-
 
     for region in regions:
         print "----------------------- %s ------------------------" % region
@@ -351,35 +547,46 @@ def main():
                 print "No default VPC was found"
             else:
                 default_vpc_id = default_vpc['VpcId']
-                igw_list = get_internet_gateways(ec2_client, default_vpc_id)
-                subnet_list = get_subnets(ec2_client, default_vpc_id)
-                route_table_list = get_route_tables(ec2_client, default_vpc_id)
-                nacl_list = get_nacls(ec2_client, default_vpc_id)
-                security_group_list = get_security_groups(ec2_client, default_vpc_id)
 
-                print "The following resources wil be deleted:"
-                print_vpc(default_vpc)
-                print_igws(igw_list)
-                print_subnets(subnet_list)
-                print_route_tables(route_table_list)
-                print_nacls(nacl_list)
-                print_security_groups(security_group_list)
-
-                if dry_run:
-                    print "Taking no action because --dry-run was passed"
+                # check if there are any dependent object that would cause us to stop...
+                dependents = get_vpc_tenants(session, default_vpc_id)
+                if len(dependents) > 0:
+                    print "This VPC has dependent resources, and thus will not be deleted:"
+                    print_resources(dependents)
 
                 else:
-                    if args.batch or prompt_to_continue():
-                        print "Deleting..."
-                        ### FOR TEST - HARDCODE JUST IN CASE
-                        delete_internet_gateways(ec2_client, igw_list, default_vpc_id, dry_run)
-                        delete_subnets(ec2_client, subnet_list, dry_run)
-                        delete_route_tables(ec2_client, route_table_list, dry_run)
-                        delete_nacls(ec2_client, nacl_list, dry_run)
-                        delete_security_groups(ec2_client, security_group_list, dry_run)
-                        delete_vpc(ec2_client, default_vpc_id, dry_run)
+
+                    # Get the items to delete
+                    igw_list = get_internet_gateways(ec2_client, default_vpc_id)
+                    subnet_list = get_subnets(ec2_client, default_vpc_id)
+                    route_table_list = get_route_tables(ec2_client, default_vpc_id)
+                    nacl_list = get_nacls(ec2_client, default_vpc_id)
+                    security_group_list = get_security_groups(ec2_client, default_vpc_id)
+
+                    print "\n\nThe following resources will be deleted:"
+                    print_vpc(default_vpc)
+                    print_igws(igw_list)
+                    print_subnets(subnet_list)
+                    print_route_tables(route_table_list)
+                    print_nacls(nacl_list)
+                    print_security_groups(security_group_list)
+
+                    # Dont take any further action if this is a dry-run
+                    if dry_run:
+                        print "Taking no action because --dry-run was passed"
+
                     else:
-                        print "Stopping due to user input..."
+                        # Delete the VPC!
+                        if args.batch or prompt_to_continue():
+                            print "Deleting..."
+                            delete_internet_gateways(ec2_client, igw_list, default_vpc_id, dry_run)
+                            delete_subnets(ec2_client, subnet_list, dry_run)
+                            delete_route_tables(ec2_client, route_table_list, dry_run)
+                            delete_nacls(ec2_client, nacl_list, dry_run)
+                            delete_security_groups(ec2_client, security_group_list, dry_run)
+                            delete_vpc(ec2_client, default_vpc_id, dry_run)
+                        else:
+                            print "Stopping due to user input..."
 
         except botocore.exceptions.ClientError as err:
             print err.message
