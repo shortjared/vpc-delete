@@ -211,7 +211,7 @@ def get_internet_gateways(ec2_client, vpc_id):
         ]
     )
     if len(response['InternetGateways']) == 0:
-        return None
+        return []
 
     return response['InternetGateways']
 
@@ -230,7 +230,7 @@ def get_subnets(ec2_client, vpc_id):
         ]
     )
     if len(response['Subnets']) == 0:
-        return None
+        return []
 
     return response['Subnets']
 
@@ -248,8 +248,9 @@ def get_route_tables(ec2_client, vpc_id):
             },
         ]
     )
+    #PP.pprint(response['RouteTables'])
     if len(response['RouteTables']) == 0:
-        return None
+        return []
 
     return response['RouteTables']
 
@@ -268,7 +269,7 @@ def get_nacls(ec2_client, vpc_id):
         ]
     )
     if len(response['NetworkAcls']) == 0:
-        return None
+        return []
 
     return response['NetworkAcls']
 
@@ -287,7 +288,7 @@ def get_security_groups(ec2_client, vpc_id):
         ]
     )
     if len(response['SecurityGroups']) == 0:
-        return None
+        return []
 
     return response['SecurityGroups']
 
@@ -348,6 +349,7 @@ def print_security_groups(security_groups):
 
 def delete_vpc(ec2_client, vpc_id, dry_run=False):
     """deletes the specified vpc"""
+    print "Deleting the vpc:" + vpc_id
     response = ec2_client.delete_vpc(
         DryRun=dry_run,
         VpcId=vpc_id
@@ -393,20 +395,32 @@ def delete_route_table(ec2_client, route_table, dry_run=False):
     """ deletes Route Table """
 
     print "Deleting route table: " + route_table['RouteTableId']
-    response = ec2_client.delete_route_table(
-        DryRun=dry_run,
-        RouteTableId=route_table['RouteTableId']
-    )
+    try:
+        response = ec2_client.delete_route_table(
+            DryRun=dry_run,
+            RouteTableId=route_table['RouteTableId']
+        )
+    except botocore.exceptions.ClientError as err:
+        print "\t" + err.message
+        print "\tNote that this error is expected if this is the default route table for a VPC"
+        return None
+
     return response
 
 def delete_nacl(ec2_client, nacl, dry_run=False):
     """ deletes network acl """
 
     print "Deleting Network ACL: " + nacl['NetworkAclId']
-    response = ec2_client.delete_network_acl(
-        DryRun=dry_run,
-        NetworkAclId=nacl['NetworkAclId']
-    )
+    try:
+        response = ec2_client.delete_network_acl(
+            DryRun=dry_run,
+            NetworkAclId=nacl['NetworkAclId']
+        )
+    except botocore.exceptions.ClientError as err:
+        print "\t" + err.message
+        print "\tNote that this error is expected if this is the default Network ACL for a VPC"
+        return None
+
     return response
 
 def delete_security_group(ec2_client, security_group, dry_run=False):
@@ -414,11 +428,16 @@ def delete_security_group(ec2_client, security_group, dry_run=False):
 
     print "Deleting Security Group:  " + security_group['GroupName'] + \
           "(" + security_group['GroupId'] +")"
-    response = ec2_client.delete_security_group(
-        DryRun=dry_run,
-        GroupName=security_group['GroupName'],
-        GroupId=security_group['GroupId']
-    )
+    try:
+        response = ec2_client.delete_security_group(
+            DryRun=dry_run,
+            GroupName=security_group['GroupName'],
+            GroupId=security_group['GroupId']
+        )
+    except botocore.exceptions.ClientError as err:
+        print "\t" + err.message
+        print "\tNote that this error is expected if this is the default network security group for a VPC"
+        return None
 
     return response
 
