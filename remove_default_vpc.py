@@ -550,7 +550,7 @@ def main():
     """
 
     args = parse_args()
-    session = boto3.Session(profile_name=args.profile, region_name=DEFAULT_REGION)
+    session = boto3.Session(region_name=DEFAULT_REGION)
     regions = get_regions(session, args.region)
     dry_run = args.dry_run
 
@@ -558,7 +558,7 @@ def main():
 
     for region in regions:
         print "----------------------- %s ------------------------" % region
-        session = boto3.Session(profile_name=args.profile, region_name=region)
+        session = boto3.Session(region_name=region)
         try:
             ec2_client = session.client('ec2')
             default_vpc = get_default_vpc(ec2_client)
